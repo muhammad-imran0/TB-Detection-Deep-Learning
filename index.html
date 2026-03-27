@@ -204,20 +204,20 @@
 <div class="diagram-box">
   <pre class="mermaid">
 flowchart TD
-    A["Dataset\n4,200 Chest X-rays\n3,500 Normal · 700 TB"] --> B["Preprocessing\nResize 224×224 · Grayscale → RGB"]
+    A["Dataset\n4,200 Chest X-rays\n3,500 Normal · 700 TB"] --> B["Preprocessing\nResize 224×224 / 227×227\nGrayscale → RGB"]
     B --> C["Oversampling\nDuplicate TB images\n490 → 2,450"]
     C --> D["Data Split\n70% Train · 15% Val · 15% Test"]
     D --> E["Augmentation\nRotation ±15° · Flip · Shift · Scale"]
 
     E --> E1["Exp 1: Custom CNN\n4 conv blocks · Adam\nBuilt from scratch"]
-    E --> E2["Exp 2: GoogLeNet\nInception modules · 5M params\nTransfer learning"]
+    E --> E2["Exp 2: SqueezeNet\nFire modules · 1.2M params\nTransfer learning"]
     E --> E3["Exp 3: ResNet-18\nSkip connections · 11M params\nTransfer learning"]
 
     E1 --> F["Evaluation\nAccuracy · Confusion Matrix\nPrecision · Recall · F1 · ROC/AUC"]
     E2 --> F
     E3 --> F
 
-    F --> G["Best Model: GoogLeNet\n100.00% Test Accuracy · AUC 1.0000"]
+    F --> G["Best Model: SqueezeNet\n99.68% Test Accuracy · AUC 0.9990"]
 
     style A fill:#1e3a5f,stroke:#58a6ff,color:#e6edf3
     style B fill:#1e3a5f,stroke:#58a6ff,color:#e6edf3
@@ -246,12 +246,12 @@ flowchart TD
     </ul>
   </div>
   <div class="card">
-    <h3>Exp 2 — GoogLeNet</h3>
+    <h3>Exp 2 — SqueezeNet</h3>
     <ul>
       <li>Pretrained on ImageNet (1.2M images)</li>
-      <li>Inception modules (multi-scale filters)</li>
-      <li>Only 5M parameters</li>
-      <li>Removed last 3 layers → added FC(2)</li>
+      <li>Fire modules (squeeze + expand)</li>
+      <li>Only 1.2M parameters</li>
+      <li>Removed last 5 layers → added Conv(1×1,2)</li>
       <li>New layers learn 10× faster</li>
       <li>SGDM, LR 0.0001, 15 epochs</li>
     </ul>
@@ -282,30 +282,30 @@ flowchart TD
   </tr>
   <tr>
     <td>Custom CNN</td>
-    <td>95.87%</td>
-    <td>95.40%</td>
-    <td>0.9540</td>
-    <td>0.9540</td>
-    <td>0.9540</td>
-    <td>0.9926</td>
+    <td>96.98%</td>
+    <td>96.19%</td>
+    <td>0.9619</td>
+    <td>0.9619</td>
+    <td>0.9619</td>
+    <td>0.9886</td>
   </tr>
   <tr>
-    <td class="best">GoogLeNet (Best)</td>
-    <td class="best">98.89%</td>
-    <td class="best">100.00%</td>
-    <td class="best">1.0000</td>
-    <td class="best">1.0000</td>
-    <td class="best">1.0000</td>
-    <td class="best">1.0000</td>
+    <td class="best">SqueezeNet (Best)</td>
+    <td class="best">99.05%</td>
+    <td class="best">99.68%</td>
+    <td class="best">0.9968</td>
+    <td class="best">0.9968</td>
+    <td class="best">0.9968</td>
+    <td class="best">0.9990</td>
   </tr>
   <tr>
     <td>ResNet-18</td>
-    <td>98.25%</td>
-    <td>99.52%</td>
-    <td>0.9952</td>
-    <td>0.9952</td>
-    <td>0.9952</td>
-    <td>0.9998</td>
+    <td>99.68%</td>
+    <td>98.89%</td>
+    <td>0.9889</td>
+    <td>0.9889</td>
+    <td>0.9889</td>
+    <td>0.9991</td>
   </tr>
 </table>
 
@@ -313,8 +313,8 @@ flowchart TD
 <div class="decisions">
   <div class="decision">
     <div class="label">Image Size</div>
-    <div class="value">224 × 224 × 3</div>
-    <div class="reason">Required by GoogLeNet & ResNet-18</div>
+    <div class="value">224×224 / 227×227</div>
+    <div class="reason">224 for CNN & ResNet, 227 for SqueezeNet</div>
   </div>
   <div class="decision">
     <div class="label">Oversampling</div>
@@ -347,7 +347,7 @@ flowchart TD
 <div class="diagram-box">
   <pre class="mermaid">
 flowchart LR
-    A["Custom CNN\nBaseline — what can a\nsimple network do?"] -->|"vs"| B["GoogLeNet\nInception modules —\ndoes multi-scale transfer\nlearning beat scratch?"] -->|"vs"| C["ResNet-18\nSkip connections —\ndoes architecture design\nmatter for medical imaging?"]
+    A["Custom CNN\nBaseline — what can a\nsimple network do?"] -->|"vs"| B["SqueezeNet\nFire modules —\ndoes compact transfer\nlearning beat scratch?"] -->|"vs"| C["ResNet-18\nSkip connections —\ndoes architecture design\nmatter for medical imaging?"]
 
     style A fill:#0d2847,stroke:#58a6ff,color:#e6edf3
     style B fill:#3d1a1a,stroke:#f85149,color:#e6edf3
@@ -358,13 +358,13 @@ flowchart LR
 <h2>6. Documents</h2>
 <div class="docs-grid">
   <div class="doc-card">
-    <div class="label">MATLAB Output</div>
-    <a href="output/MUHAMMAD_IMRAN_Final.pdf" target="_blank">📄 View Published PDF</a>
-    <div class="desc">All code, figures, and results</div>
+    <div class="label">Coursework Report</div>
+    <a href="3004795_TB_Detection_Report.md">View Report</a>
+    <div class="desc">Full analysis and critical discussion</div>
   </div>
   <div class="doc-card">
     <div class="label">GitHub Repository</div>
-    <a href="https://github.com/muhammad-imran0/TB-Detection-Deep-Learning" target="_blank">💻 View Source Code</a>
+    <a href="https://github.com/muhammad-imran0/TB-Detection-Deep-Learning" target="_blank">View Source Code</a>
     <div class="desc">MATLAB code, report, and flowchart</div>
   </div>
 </div>

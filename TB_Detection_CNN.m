@@ -13,8 +13,14 @@
 %
 %  What I did:
 %    Experiment 1 - I built a custom CNN from scratch (a shallow network)
-%    Experiment 2 - I used GoogLeNet with transfer learning (inception modules)
+%    Experiment 2 - I used SqueezeNet with transfer learning (fire modules)
 %    Experiment 3 - I used ResNet-18 with transfer learning (skip connections)
+%
+%  I chose SqueezeNet and ResNet-18 because both architectures were used
+%  in the research papers related to my dataset. Rahman et al. (2020) used
+%  both for TB detection on the same Kaggle chest X-ray dataset. The MDPI
+%  Applied Sciences paper also used ResNet-18 and SqueezeNet for chest
+%  X-ray pneumonia classification, where SqueezeNet achieved 96.1% accuracy.
 %
 %  The reason I tried three different models is to compare a simple network
 %  against two pretrained ones and see which one works best for this
@@ -105,7 +111,8 @@ fprintf('Original image size: %d x %d x %d\n', size(img,1), size(img,2), size(im
 %  PART 2: PREPROCESSING & DATA AUGMENTATION
 %  =========================================================================
 %  Before feeding images into any model, I needed to do a few things:
-%    - Resize all images to 224x224 because GoogLeNet and ResNet-18 expect that
+%    - Resize images to 224x224 for Custom CNN and ResNet-18, and 227x227
+%      for SqueezeNet (each pretrained model has its own expected input size)
 %    - Convert grayscale X-rays to 3-channel RGB since pretrained models
 %      were originally trained on colour images
 %    - Apply data augmentation on the training set to help prevent
@@ -194,6 +201,21 @@ augTestDS = augmentedImageDatastore(imageSize, imdsTest, ...
     'ColorPreprocessing', 'gray2rgb');
 
 fprintf('Augmented training datastore ready: %d images\n', augTrainDS.NumObservations);
+
+% SqueezeNet expects 227x227 input so I created separate datastores for it
+imageSizeSQ = [227 227 3];
+
+augTrainSQ = augmentedImageDatastore(imageSizeSQ, imdsTrain, ...
+    'DataAugmentation', trainAugmenter, ...
+    'ColorPreprocessing', 'gray2rgb');
+
+augValSQ = augmentedImageDatastore(imageSizeSQ, imdsValidation, ...
+    'ColorPreprocessing', 'gray2rgb');
+
+augTestSQ = augmentedImageDatastore(imageSizeSQ, imdsTest, ...
+    'ColorPreprocessing', 'gray2rgb');
+
+fprintf('SqueezeNet datastore ready (227x227): %d images\n', augTrainSQ.NumObservations);
 
 %% =========================================================================
 %  PART 3: CUSTOM CNN ARCHITECTURE (Experiment 1 - "Shallow" Network)
@@ -285,50 +307,55 @@ customValAcc = sum(YPredVal_Custom == YVal) / numel(YVal) * 100;
 fprintf('Custom CNN Validation Accuracy: %.2f%%\n', customValAcc);
 
 %% =========================================================================
-%  PART 5: TRANSFER LEARNING WITH GOOGLENET (Experiment 2)
+%  PART 5: TRANSFER LEARNING WITH SQUEEZENET (Experiment 2)
 %  =========================================================================
-%  For my second experiment I used GoogLeNet, which won the ImageNet
-%  competition in 2014 with only 5 million parameters. I chose GoogLeNet
-%  because it introduced the "inception module" - instead of just stacking
-%  convolutions one after another like VGG, it runs multiple filter sizes
-%  in parallel and combines them. This makes it both fast and accurate.
-%  I learned about this architecture in the Week 7 lecture.
+%  For my second experiment I used SqueezeNet. I chose this architecture
+%  because it was used by Rahman et al. (2020) for TB detection on the
+%  same Kaggle chest X-ray dataset I am using. It was also used in the
+%  MDPI Applied Sciences paper for pneumonia detection from chest X-rays.
 %
-%  GoogLeNet also uses global average pooling instead of big FC layers,
-%  which is why it has so few parameters compared to VGG16 (5M vs 140M).
-%  This makes it much faster to train, especially on CPU.
+%  SqueezeNet uses "fire modules" which combine a squeeze layer (1x1
+%  convolutions to reduce channels) with an expand layer (mix of 1x1 and
+%  3x3 convolutions). This design achieves AlexNet-level accuracy with
+%  50x fewer parameters - only 1.2M compared to AlexNet's 60M. This makes
+%  it extremely fast to train, especially on CPU, which is important for
+%  my setup.
 %
-%  What I did: I took the pretrained GoogLeNet, removed the last 3 layers
-%  (loss3-classifier, prob, output) which were for 1000 ImageNet classes,
-%  and replaced them with my own layers for 2-class TB classification.
+%  What I did: I took the pretrained SqueezeNet, removed the last
+%  classification layers (conv10, relu_conv10, pool10, prob, and the
+%  classification layer) which were for 1000 ImageNet classes, and
+%  replaced them with my own layers for 2-class TB classification.
+%  SqueezeNet expects 227x227 input so I use separate datastores for it.
 %  =========================================================================
 
-netGoogle = googlenet;
-lgraphGoogle = layerGraph(netGoogle);
+netSQ = squeezenet;
+lgraphSQ = layerGraph(netSQ);
 
-% I removed the last 3 layers that were for ImageNet's 1000 classes
-lgraphGoogle = removeLayers(lgraphGoogle, {'loss3-classifier', 'prob', 'output'});
+% I removed the last classification layers that were for ImageNet's 1000 classes
+lgraphSQ = removeLayers(lgraphSQ, {'conv10', 'relu_conv10', 'pool10', 'prob', 'ClassificationLayer_predictions'});
 
-% I added my own layers: FC(2) + Softmax + Classification for TB vs Normal
-newLayersGoogle = [
-    fullyConnectedLayer(2, 'Name', 'fc_tb_google', ...
+% I added my own layers: Conv(1x1,2) + ReLU + GAP + Softmax + Classification
+newLayersSQ = [
+    convolution2dLayer(1, 2, 'Name', 'conv10_tb', ...
         'WeightLearnRateFactor', 10, ...
         'BiasLearnRateFactor', 10)
-    softmaxLayer('Name', 'softmax_tb_google')
-    classificationLayer('Name', 'output_tb_google')
+    reluLayer('Name', 'relu_tb_sq')
+    globalAveragePooling2dLayer('Name', 'gap_tb_sq')
+    softmaxLayer('Name', 'softmax_tb_sq')
+    classificationLayer('Name', 'output_tb_sq')
 ];
 
-lgraphGoogle = addLayers(lgraphGoogle, newLayersGoogle);
-lgraphGoogle = connectLayers(lgraphGoogle, 'pool5-drop_7x7_s1', 'fc_tb_google');
+lgraphSQ = addLayers(lgraphSQ, newLayersSQ);
+lgraphSQ = connectLayers(lgraphSQ, 'drop9', 'conv10_tb');
 
-analyzeNetwork(lgraphGoogle, 'TargetUsage', 'trainNetwork');
+analyzeNetwork(lgraphSQ, 'TargetUsage', 'trainNetwork');
 
-%% Training options for GoogLeNet
+%% Training options for SqueezeNet
 %  I used a smaller learning rate (0.0001) compared to my custom CNN
 %  because the pretrained weights are already good - if I use a big
-%  learning rate it would destroy what GoogLeNet already learned.
+%  learning rate it would destroy what SqueezeNet already learned.
 
-optionsGoogle = trainingOptions('sgdm', ...
+optionsSQ = trainingOptions('sgdm', ...
     'InitialLearnRate',     0.0001, ...
     'LearnRateSchedule',    'piecewise', ...
     'LearnRateDropFactor',  0.5, ...
@@ -336,27 +363,27 @@ optionsGoogle = trainingOptions('sgdm', ...
     'MaxEpochs',            15, ...
     'MiniBatchSize',        32, ...
     'Shuffle',              'every-epoch', ...
-    'ValidationData',       augValDS, ...
+    'ValidationData',       augValSQ, ...
     'ValidationFrequency',  30, ...
     'ValidationPatience',   5, ...
     'Verbose',              true, ...
     'Plots',                'training-progress');
 
 fprintf('\n============================================\n');
-fprintf('  TRAINING: GoogLeNet Transfer Learning (Experiment 2)\n');
+fprintf('  TRAINING: SqueezeNet Transfer Learning (Experiment 2)\n');
 fprintf('============================================\n');
 
-[netGoogLeNet, infoGoogLeNet] = trainNetwork(augTrainDS, lgraphGoogle, optionsGoogle);
+[netSqueezeNet, infoSQ] = trainNetwork(augTrainSQ, lgraphSQ, optionsSQ);
 
-fprintf('GoogLeNet training complete.\n');
+fprintf('SqueezeNet training complete.\n');
 
 % Save immediately so I don't lose this model if MATLAB crashes later
-save(fullfile(savePath, 'trained_googlenet.mat'), 'netGoogLeNet', 'infoGoogLeNet');
-fprintf('GoogLeNet saved to: %s\n', fullfile(savePath, 'trained_googlenet.mat'));
+save(fullfile(savePath, 'trained_squeezenet.mat'), 'netSqueezeNet', 'infoSQ');
+fprintf('SqueezeNet saved to: %s\n', fullfile(savePath, 'trained_squeezenet.mat'));
 
-YPredVal_Google = classify(netGoogLeNet, augValDS);
-googleValAcc = sum(YPredVal_Google == YVal) / numel(YVal) * 100;
-fprintf('GoogLeNet Validation Accuracy: %.2f%%\n', googleValAcc);
+YPredVal_SQ = classify(netSqueezeNet, augValSQ);
+sqValAcc = sum(YPredVal_SQ == YVal) / numel(YVal) * 100;
+fprintf('SqueezeNet Validation Accuracy: %.2f%%\n', sqValAcc);
 
 %% =========================================================================
 %  PART 6: TRANSFER LEARNING WITH RESNET-18 (Experiment 3)
@@ -366,11 +393,13 @@ fprintf('GoogLeNet Validation Accuracy: %.2f%%\n', googleValAcc);
 %  solve the vanishing gradient problem. I learned about this in the
 %  Week 7 lecture.
 %
-%  ResNet-18 has 18 layers and ~11M parameters. It's one of the most
-%  popular architectures in medical imaging research so I thought it
-%  would be a good fit for TB detection.
+%  ResNet-18 has 18 layers and ~11M parameters. Rahman et al. (2020)
+%  also used ResNet-18 for TB detection on the same dataset, and the
+%  MDPI Applied Sciences paper used it for pneumonia chest X-ray
+%  classification. So both my transfer learning models come directly
+%  from the research papers I cited in Week 3.
 %
-%  I did the same thing as with GoogLeNet: removed the last 3 layers
+%  I did the same thing as with SqueezeNet: removed the last 3 layers
 %  and added my own classification layers for Normal vs Tuberculosis.
 %  =========================================================================
 
@@ -394,7 +423,7 @@ lgraphRes = connectLayers(lgraphRes, 'pool5', 'fc_tb_res');
 analyzeNetwork(lgraphRes, 'TargetUsage', 'trainNetwork');
 
 %% Training options for ResNet-18
-%  I used the same training strategy as GoogLeNet - low learning rate to keep
+%  I used the same training strategy as SqueezeNet - low learning rate to keep
 %  the pretrained features intact, and my new layers learn 10x faster.
 
 optionsRes = trainingOptions('sgdm', ...
@@ -436,16 +465,16 @@ fprintf('  TEST SET EVALUATION\n');
 fprintf('============================================\n');
 
 [YPredCustom, scoresCustom] = classify(netCustom, augTestDS);
-[YPredGoogle, scoresGoogle] = classify(netGoogLeNet, augTestDS);
-[YPredRes,    scoresRes]    = classify(netResNet18, augTestDS);
+[YPredSQ,     scoresSQ]    = classify(netSqueezeNet, augTestSQ);
+[YPredRes,    scoresRes]   = classify(netResNet18, augTestDS);
 YTest = imdsTest.Labels;
 
 customTestAcc = sum(YPredCustom == YTest) / numel(YTest) * 100;
-googleTestAcc = sum(YPredGoogle == YTest) / numel(YTest) * 100;
+sqTestAcc     = sum(YPredSQ == YTest) / numel(YTest) * 100;
 resTestAcc    = sum(YPredRes == YTest) / numel(YTest) * 100;
 
 fprintf('\n  Custom CNN  Test Accuracy: %.2f%%\n', customTestAcc);
-fprintf('  GoogLeNet   Test Accuracy: %.2f%%\n', googleTestAcc);
+fprintf('  SqueezeNet  Test Accuracy: %.2f%%\n', sqTestAcc);
 fprintf('  ResNet-18   Test Accuracy: %.2f%%\n', resTestAcc);
 
 %% =========================================================================
@@ -484,28 +513,28 @@ for ep = 1:numEpochsCustom
     elseif ep > 1,      valLossEp_Custom(ep) = valLossEp_Custom(ep-1); end
 end
 
-% GoogLeNet
-numItersGoogle  = numel(infoGoogLeNet.TrainingAccuracy);
-numEpochsGoogle = ceil(numItersGoogle / iterationsPerEpoch);
+% SqueezeNet
+numItersSQ  = numel(infoSQ.TrainingAccuracy);
+numEpochsSQ = ceil(numItersSQ / iterationsPerEpoch);
 
-trainAccEp_Google = zeros(1, numEpochsGoogle);
-valAccEp_Google   = zeros(1, numEpochsGoogle);
-trainLossEp_Google = zeros(1, numEpochsGoogle);
-valLossEp_Google   = zeros(1, numEpochsGoogle);
+trainAccEp_SQ = zeros(1, numEpochsSQ);
+valAccEp_SQ   = zeros(1, numEpochsSQ);
+trainLossEp_SQ = zeros(1, numEpochsSQ);
+valLossEp_SQ   = zeros(1, numEpochsSQ);
 
-for ep = 1:numEpochsGoogle
+for ep = 1:numEpochsSQ
     s = (ep-1)*iterationsPerEpoch + 1;
-    e = min(ep*iterationsPerEpoch, numItersGoogle);
-    trainAccEp_Google(ep)  = mean(infoGoogLeNet.TrainingAccuracy(s:e));
-    trainLossEp_Google(ep) = mean(infoGoogLeNet.TrainingLoss(s:e));
-    vAcc = infoGoogLeNet.ValidationAccuracy(s:e);
+    e = min(ep*iterationsPerEpoch, numItersSQ);
+    trainAccEp_SQ(ep)  = mean(infoSQ.TrainingAccuracy(s:e));
+    trainLossEp_SQ(ep) = mean(infoSQ.TrainingLoss(s:e));
+    vAcc = infoSQ.ValidationAccuracy(s:e);
     vAcc = vAcc(~isnan(vAcc));
-    if ~isempty(vAcc), valAccEp_Google(ep) = vAcc(end);
-    elseif ep > 1,     valAccEp_Google(ep) = valAccEp_Google(ep-1); end
-    vLoss = infoGoogLeNet.ValidationLoss(s:e);
+    if ~isempty(vAcc), valAccEp_SQ(ep) = vAcc(end);
+    elseif ep > 1,     valAccEp_SQ(ep) = valAccEp_SQ(ep-1); end
+    vLoss = infoSQ.ValidationLoss(s:e);
     vLoss = vLoss(~isnan(vLoss));
-    if ~isempty(vLoss), valLossEp_Google(ep) = vLoss(end);
-    elseif ep > 1,      valLossEp_Google(ep) = valLossEp_Google(ep-1); end
+    if ~isempty(vLoss), valLossEp_SQ(ep) = vLoss(end);
+    elseif ep > 1,      valLossEp_SQ(ep) = valLossEp_SQ(ep-1); end
 end
 
 % ResNet-18
@@ -548,21 +577,21 @@ legend('Training', 'Validation', 'Test Accuracy', 'Location', 'southeast', 'Font
 grid on; ylim([40 105]); xlim([1 numEpochsCustom]);
 saveas(gcf, 'custom_cnn_accuracy_curve.png');
 
-%% Accuracy curve - GoogLeNet
-fprintf('\n--- Figure 4: GoogLeNet - Accuracy Over Epochs ---\n\n');
+%% Accuracy curve - SqueezeNet
+fprintf('\n--- Figure 4: SqueezeNet - Accuracy Over Epochs ---\n\n');
 figure('Position', [100, 100, 800, 550]);
-plot(1:numEpochsGoogle, trainAccEp_Google, 'b-o', 'LineWidth', 2, 'MarkerSize', 6);
+plot(1:numEpochsSQ, trainAccEp_SQ, 'b-o', 'LineWidth', 2, 'MarkerSize', 6);
 hold on;
-plot(1:numEpochsGoogle, valAccEp_Google, 'r--s', 'LineWidth', 2, 'MarkerSize', 6);
-yline(googleTestAcc, 'g-.', sprintf('Test: %.1f%%', googleTestAcc), ...
+plot(1:numEpochsSQ, valAccEp_SQ, 'r--s', 'LineWidth', 2, 'MarkerSize', 6);
+yline(sqTestAcc, 'g-.', sprintf('Test: %.1f%%', sqTestAcc), ...
     'LineWidth', 2, 'FontSize', 11, 'LabelHorizontalAlignment', 'left');
 hold off;
-title('GoogLeNet - Accuracy Curve', 'FontSize', 16, 'FontWeight', 'bold');
+title('SqueezeNet - Accuracy Curve', 'FontSize', 16, 'FontWeight', 'bold');
 xlabel('Number of Epochs', 'FontSize', 13);
 ylabel('Accuracy (%)', 'FontSize', 13);
 legend('Training', 'Validation', 'Test Accuracy', 'Location', 'southeast', 'FontSize', 12);
-grid on; ylim([40 105]); xlim([1 numEpochsGoogle]);
-saveas(gcf, 'googlenet_accuracy_curve.png');
+grid on; ylim([40 105]); xlim([1 numEpochsSQ]);
+saveas(gcf, 'squeezenet_accuracy_curve.png');
 
 %% Accuracy curve - ResNet-18
 fprintf('\n--- Figure 5: ResNet-18 - Accuracy Over Epochs ---\n\n');
@@ -606,13 +635,13 @@ legend('Train', 'Val', 'Location', 'northeast', 'FontSize', 9);
 grid on;
 
 subplot(1, 3, 2);
-plot(1:numEpochsGoogle, trainLossEp_Google, '-o', 'Color', [0.85 0.15 0.15], ...
+plot(1:numEpochsSQ, trainLossEp_SQ, '-o', 'Color', [0.85 0.15 0.15], ...
     'LineWidth', 2, 'MarkerSize', 6, 'MarkerFaceColor', [0.85 0.15 0.15]);
 hold on;
-plot(1:numEpochsGoogle, valLossEp_Google, '--s', 'Color', [0.55 0.05 0.05], ...
+plot(1:numEpochsSQ, valLossEp_SQ, '--s', 'Color', [0.55 0.05 0.05], ...
     'LineWidth', 2, 'MarkerSize', 6, 'MarkerFaceColor', [0.55 0.05 0.05]);
 hold off;
-title('GoogLeNet', 'FontSize', 14, 'FontWeight', 'bold');
+title('SqueezeNet', 'FontSize', 14, 'FontWeight', 'bold');
 xlabel('Epochs', 'FontSize', 12); ylabel('Loss', 'FontSize', 12);
 legend('Train', 'Val', 'Location', 'northeast', 'FontSize', 9);
 grid on;
@@ -650,15 +679,15 @@ confusionchart(confMatCustom, categories(YTest), ...
     'ColumnSummary', 'column-normalized');
 saveas(gcf, 'confusion_matrix_custom_cnn.png');
 
-% GoogLeNet confusion matrix
-fprintf('\n--- Figure 8: Confusion Matrix - GoogLeNet ---\n\n');
+% SqueezeNet confusion matrix
+fprintf('\n--- Figure 8: Confusion Matrix - SqueezeNet ---\n\n');
 figure('Position', [100, 100, 600, 550]);
-confMatGoogle = confusionmat(YTest, YPredGoogle);
-confusionchart(confMatGoogle, categories(YTest), ...
-    'Title', sprintf('GoogLeNet (Accuracy: %.2f%%)', googleTestAcc), ...
+confMatSQ = confusionmat(YTest, YPredSQ);
+confusionchart(confMatSQ, categories(YTest), ...
+    'Title', sprintf('SqueezeNet (Accuracy: %.2f%%)', sqTestAcc), ...
     'RowSummary', 'row-normalized', ...
     'ColumnSummary', 'column-normalized');
-saveas(gcf, 'confusion_matrix_googlenet.png');
+saveas(gcf, 'confusion_matrix_squeezenet.png');
 
 % ResNet-18 confusion matrix
 fprintf('\n--- Figure 9: Confusion Matrix - ResNet-18 ---\n\n');
@@ -699,14 +728,14 @@ xlabel('False Positive Rate', 'FontSize', 10);
 ylabel('True Positive Rate', 'FontSize', 10);
 grid on;
 
-% GoogLeNet ROC
+% SqueezeNet ROC
 subplot(1, 3, 2);
-[Xroc_G, Yroc_G, ~, AUC_G] = perfcurve(YTestBinary, scoresGoogle(:,tbIdx), true);
-plot(Xroc_G, Yroc_G, 'r-', 'LineWidth', 2);
+[Xroc_SQ, Yroc_SQ, ~, AUC_SQ] = perfcurve(YTestBinary, scoresSQ(:,tbIdx), true);
+plot(Xroc_SQ, Yroc_SQ, 'r-', 'LineWidth', 2);
 hold on;
 plot([0 1], [0 1], 'k--', 'LineWidth', 1);
 hold off;
-title(sprintf('GoogLeNet\nAUC = %.4f', AUC_G), 'FontSize', 11, 'FontWeight', 'bold');
+title(sprintf('SqueezeNet\nAUC = %.4f', AUC_SQ), 'FontSize', 11, 'FontWeight', 'bold');
 xlabel('False Positive Rate', 'FontSize', 10);
 ylabel('True Positive Rate', 'FontSize', 10);
 grid on;
@@ -727,14 +756,14 @@ saveas(gcf, 'roc_curves.png');
 
 fprintf('\nROC AUC Values:\n');
 fprintf('  Custom CNN:  %.4f\n', AUC_C);
-fprintf('  GoogLeNet:   %.4f\n', AUC_G);
+fprintf('  SqueezeNet:  %.4f\n', AUC_SQ);
 fprintf('  ResNet-18:   %.4f\n', AUC_R);
 
 %% I also plotted all three ROC curves on one figure for easy comparison
 fprintf('\n--- Figure 11: ROC Curve Comparison ---\n\n');
 figure('Position', [100, 100, 700, 550]);
 plot(Xroc_C, Yroc_C, 'b-', 'LineWidth', 2); hold on;
-plot(Xroc_G, Yroc_G, 'r-', 'LineWidth', 2);
+plot(Xroc_SQ, Yroc_SQ, 'r-', 'LineWidth', 2);
 plot(Xroc_R, Yroc_R, 'g-', 'LineWidth', 2);
 plot([0 1], [0 1], 'k--', 'LineWidth', 1);
 hold off;
@@ -742,7 +771,7 @@ title('ROC Curve Comparison', 'FontSize', 16, 'FontWeight', 'bold');
 xlabel('False Positive Rate', 'FontSize', 13);
 ylabel('True Positive Rate', 'FontSize', 13);
 legend(sprintf('Custom CNN (AUC=%.4f)', AUC_C), ...
-       sprintf('GoogLeNet (AUC=%.4f)', AUC_G), ...
+       sprintf('SqueezeNet (AUC=%.4f)', AUC_SQ), ...
        sprintf('ResNet-18 (AUC=%.4f)', AUC_R), ...
        'Random', 'Location', 'southeast', 'FontSize', 11);
 grid on;
@@ -792,35 +821,35 @@ oF1_C   = 2*(oPrec_C*oRec_C)/(oPrec_C+oRec_C+eps);
 
 fprintf('Overall  Precision: %.4f  Recall: %.4f  F1: %.4f\n', oPrec_C, oRec_C, oF1_C);
 
-% --- GoogLeNet metrics ---
+% --- SqueezeNet metrics ---
 fprintf('\n============================================\n');
-fprintf('  METRICS - GoogLeNet\n');
+fprintf('  METRICS - SqueezeNet\n');
 fprintf('============================================\n');
 
-precGoogle = zeros(numClasses, 1);
-recGoogle  = zeros(numClasses, 1);
-f1Google   = zeros(numClasses, 1);
+precSQ = zeros(numClasses, 1);
+recSQ  = zeros(numClasses, 1);
+f1SQ   = zeros(numClasses, 1);
 
 for i = 1:numClasses
-    TP = confMatGoogle(i,i);
-    FP = sum(confMatGoogle(:,i)) - TP;
-    FN = sum(confMatGoogle(i,:)) - TP;
-    precGoogle(i) = TP / (TP + FP + eps);
-    recGoogle(i)  = TP / (TP + FN + eps);
-    f1Google(i)   = 2*(precGoogle(i)*recGoogle(i)) / (precGoogle(i)+recGoogle(i)+eps);
+    TP = confMatSQ(i,i);
+    FP = sum(confMatSQ(:,i)) - TP;
+    FN = sum(confMatSQ(i,:)) - TP;
+    precSQ(i) = TP / (TP + FP + eps);
+    recSQ(i)  = TP / (TP + FN + eps);
+    f1SQ(i)   = 2*(precSQ(i)*recSQ(i)) / (precSQ(i)+recSQ(i)+eps);
 end
 
-disp(table(classNames, precGoogle, recGoogle, f1Google, ...
+disp(table(classNames, precSQ, recSQ, f1SQ, ...
     'VariableNames', {'Class','Precision','Recall','F1Score'}));
 
-TP_v = sum(diag(confMatGoogle));
-FP_v = sum(sum(confMatGoogle,1)) - TP_v;
-FN_v = sum(sum(confMatGoogle,2)) - TP_v;
-oPrec_V = TP_v/(TP_v+FP_v+eps);
-oRec_V  = TP_v/(TP_v+FN_v+eps);
-oF1_V   = 2*(oPrec_V*oRec_V)/(oPrec_V+oRec_V+eps);
+TP_sq = sum(diag(confMatSQ));
+FP_sq = sum(sum(confMatSQ,1)) - TP_sq;
+FN_sq = sum(sum(confMatSQ,2)) - TP_sq;
+oPrec_SQ = TP_sq/(TP_sq+FP_sq+eps);
+oRec_SQ  = TP_sq/(TP_sq+FN_sq+eps);
+oF1_SQ   = 2*(oPrec_SQ*oRec_SQ)/(oPrec_SQ+oRec_SQ+eps);
 
-fprintf('Overall  Precision: %.4f  Recall: %.4f  F1: %.4f\n', oPrec_V, oRec_V, oF1_V);
+fprintf('Overall  Precision: %.4f  Recall: %.4f  F1: %.4f\n', oPrec_SQ, oRec_SQ, oF1_SQ);
 
 % --- ResNet-18 metrics ---
 fprintf('\n============================================\n');
@@ -860,22 +889,22 @@ fprintf('\n============================================\n');
 fprintf('  MODEL COMPARISON SUMMARY\n');
 fprintf('============================================\n');
 
-fprintf('\n  %-25s %-15s %-15s %-15s\n', 'Metric', 'Custom CNN', 'GoogLeNet', 'ResNet-18');
+fprintf('\n  %-25s %-15s %-15s %-15s\n', 'Metric', 'Custom CNN', 'SqueezeNet', 'ResNet-18');
 fprintf('  %-25s %-15s %-15s %-15s\n', '-------------------------', '---------------', '---------------', '---------------');
-fprintf('  %-25s %-15.2f %-15.2f %-15.2f\n', 'Validation Accuracy (%)', customValAcc, googleValAcc, resValAcc);
-fprintf('  %-25s %-15.2f %-15.2f %-15.2f\n', 'Test Accuracy (%)',       customTestAcc, googleTestAcc, resTestAcc);
-fprintf('  %-25s %-15.4f %-15.4f %-15.4f\n', 'Overall Precision',       oPrec_C, oPrec_V, oPrec_R);
-fprintf('  %-25s %-15.4f %-15.4f %-15.4f\n', 'Overall Recall',          oRec_C, oRec_V, oRec_R);
-fprintf('  %-25s %-15.4f %-15.4f %-15.4f\n', 'Overall F1-Score',        oF1_C, oF1_V, oF1_R);
+fprintf('  %-25s %-15.2f %-15.2f %-15.2f\n', 'Validation Accuracy (%)', customValAcc, sqValAcc, resValAcc);
+fprintf('  %-25s %-15.2f %-15.2f %-15.2f\n', 'Test Accuracy (%)',       customTestAcc, sqTestAcc, resTestAcc);
+fprintf('  %-25s %-15.4f %-15.4f %-15.4f\n', 'Overall Precision',       oPrec_C, oPrec_SQ, oPrec_R);
+fprintf('  %-25s %-15.4f %-15.4f %-15.4f\n', 'Overall Recall',          oRec_C, oRec_SQ, oRec_R);
+fprintf('  %-25s %-15.4f %-15.4f %-15.4f\n', 'Overall F1-Score',        oF1_C, oF1_SQ, oF1_R);
 
 %% One grouped bar chart to compare all three models side by side
 fprintf('\n--- Figure 12: Model Performance Comparison ---\n\n');
 metricNames  = {'Accuracy', 'Precision', 'Recall', 'F1-Score'};
-customScores = [customTestAcc, oPrec_C*100, oRec_C*100, oF1_C*100];
-googleScores = [googleTestAcc, oPrec_V*100, oRec_V*100, oF1_V*100];
-resScores    = [resTestAcc,    oPrec_R*100, oRec_R*100, oF1_R*100];
+customScores = [customTestAcc, oPrec_C*100,  oRec_C*100,  oF1_C*100];
+sqScores     = [sqTestAcc,     oPrec_SQ*100, oRec_SQ*100, oF1_SQ*100];
+resScores    = [resTestAcc,    oPrec_R*100,  oRec_R*100,  oF1_R*100];
 
-barData = [customScores; googleScores; resScores]';
+barData = [customScores; sqScores; resScores]';
 X = categorical(metricNames);
 X = reordercats(X, metricNames);
 
@@ -887,7 +916,7 @@ b(3).FaceColor = [0.13 0.65 0.30]; b(3).EdgeColor = 'none';
 
 title('Model Performance Comparison', 'FontSize', 16, 'FontWeight', 'bold');
 ylabel('Score (%)', 'FontSize', 13);
-legend('Custom CNN', 'GoogLeNet', 'ResNet-18', 'Location', 'southwest', 'FontSize', 11);
+legend('Custom CNN', 'SqueezeNet', 'ResNet-18', 'Location', 'southwest', 'FontSize', 11);
 ylim([93 101]);
 set(gca, 'YTick', 93:1:101, 'FontSize', 11);
 grid on;
@@ -907,15 +936,15 @@ saveas(gcf, 'model_comparison.png');
 %% =========================================================================
 %  PART 13: SAMPLE PREDICTIONS
 %  =========================================================================
-%  Finally I wanted to visually check how the best model (GoogLeNet)
+%  Finally I wanted to visually check how the best model (SqueezeNet)
 %  performs on actual X-ray images. I picked 8 random test images and
 %  displayed the true label vs predicted label. Green means correct,
 %  red means the model got it wrong.
 %  =========================================================================
 
-fprintf('\n--- Figure 13: Sample Predictions (GoogLeNet) ---\n\n');
+fprintf('\n--- Figure 13: Sample Predictions (SqueezeNet) ---\n\n');
 figure('Position', [100, 100, 1200, 700]);
-sgtitle('Sample Test Predictions (GoogLeNet - Best Model)', ...
+sgtitle('Sample Test Predictions (SqueezeNet - Best Model)', ...
     'FontSize', 16, 'FontWeight', 'bold');
 
 rng(42);
@@ -927,7 +956,7 @@ for i = 1:8
     imshow(img);
 
     trueLabel = string(YTest(sampleIdx(i)));
-    predLabel = string(YPredGoogle(sampleIdx(i)));
+    predLabel = string(YPredSQ(sampleIdx(i)));
 
     if trueLabel == predLabel
         titleColor = [0 0.6 0];
@@ -948,7 +977,7 @@ saveas(gcf, 'sample_predictions.png');
 %  time I want to use or test them again.
 
 save(fullfile(savePath, 'trained_custom_cnn.mat'), 'netCustom', 'infoCustom');
-save(fullfile(savePath, 'trained_googlenet.mat'), 'netGoogLeNet', 'infoGoogLeNet');
+save(fullfile(savePath, 'trained_squeezenet.mat'), 'netSqueezeNet', 'infoSQ');
 save(fullfile(savePath, 'trained_resnet18.mat'), 'netResNet18', 'infoResNet');
 fprintf('\nAll three models saved to .mat files.\n');
 
@@ -957,18 +986,18 @@ fprintf('\n============================================\n');
 fprintf('  ALL DONE\n');
 fprintf('============================================\n');
 fprintf('  Custom CNN  - Val: %.2f%%  |  Test: %.2f%%\n', customValAcc, customTestAcc);
-fprintf('  GoogLeNet   - Val: %.2f%%  |  Test: %.2f%%\n', googleValAcc, googleTestAcc);
+fprintf('  SqueezeNet  - Val: %.2f%%  |  Test: %.2f%%\n', sqValAcc, sqTestAcc);
 fprintf('  ResNet-18   - Val: %.2f%%  |  Test: %.2f%%\n', resValAcc, resTestAcc);
 fprintf('============================================\n');
 fprintf('  Figures saved:\n');
 fprintf('    class_distribution.png\n');
 fprintf('    sample_images.png\n');
 fprintf('    custom_cnn_accuracy_curve.png\n');
-fprintf('    googlenet_accuracy_curve.png\n');
+fprintf('    squeezenet_accuracy_curve.png\n');
 fprintf('    resnet18_accuracy_curve.png\n');
 fprintf('    loss_curves.png\n');
 fprintf('    confusion_matrix_custom_cnn.png\n');
-fprintf('    confusion_matrix_googlenet.png\n');
+fprintf('    confusion_matrix_squeezenet.png\n');
 fprintf('    confusion_matrix_resnet18.png\n');
 fprintf('    roc_curves.png\n');
 fprintf('    roc_comparison.png\n');

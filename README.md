@@ -12,11 +12,11 @@ This project builds and compares three CNN-based models to classify chest X-ray 
 
 | # | Model | Type | Test Accuracy | F1-Score | AUC |
 |---|-------|------|--------------|----------|-----|
-| 1 | Custom CNN | Built from scratch | 95.40% | 0.9540 | 0.9926 |
-| 2 | **GoogLeNet** | Transfer learning | **100.00%** | **1.0000** | **1.0000** |
-| 3 | ResNet-18 | Transfer learning | 99.52% | 0.9952 | 0.9998 |
+| 1 | Custom CNN | Built from scratch | 96.19% | 0.9619 | 0.9886 |
+| 2 | **SqueezeNet** | Transfer learning | **99.68%** | **0.9968** | **0.9990** |
+| 3 | ResNet-18 | Transfer learning | 98.89% | 0.9889 | 0.9991 |
 
-GoogLeNet achieved the best results, correctly classifying all 630 test images.
+SqueezeNet achieved the best test accuracy at 99.68%, correctly classifying 628 out of 630 test images.
 
 ## Dataset
 
@@ -36,9 +36,7 @@ TB-Detection-Deep-Learning/
 ├── README.md                          # This file
 ├── TB_Detection_CNN.m                 # Main MATLAB script (all 3 experiments)
 ├── 3004795_TB_Detection_Report.md     # Coursework report (Markdown)
-├── TB_Detection_Flowchart.html        # Project pipeline flowchart
-├── output/
-│   └── MUHAMMAD_IMRAN_Final.pdf       # Published MATLAB output with all figures
+├── index.html                         # Project pipeline flowchart
 └── .gitignore
 ```
 
@@ -47,7 +45,7 @@ TB-Detection-Deep-Learning/
 ### Requirements
 - **MATLAB R2023b** or later (also works on MATLAB Online)
 - **Deep Learning Toolbox**
-- **GoogLeNet support package** (`googlenet`)
+- **SqueezeNet support package** (`squeezenet`)
 - **ResNet-18 support package** (`resnet18`)
 
 ### Steps
@@ -63,9 +61,9 @@ TB-Detection-Deep-Learning/
 
 3. Open `TB_Detection_CNN.m` in MATLAB
 
-4. Update the dataset path on **line 30** if needed:
+4. Update the dataset path on **line 53** if needed:
    ```matlab
-   datasetPath = fullfile(pwd, 'TB_Chest_Radiography_Database');
+   datasetPath = 'TB_Chest_Radiography_Database';
    ```
 
 5. Run the script section by section (each `%%` block), or run all at once
@@ -73,7 +71,7 @@ TB-Detection-Deep-Learning/
 ### Expected Output
 - 13 figures (accuracy curves, confusion matrices, ROC curves, comparison charts, sample predictions)
 - Console output with all metrics (accuracy, precision, recall, F1, AUC)
-- Training takes approximately 30–90 minutes on CPU depending on hardware
+- Training takes approximately 20–40 minutes on CPU depending on hardware
 
 ## Three Experiments
 
@@ -82,11 +80,12 @@ TB-Detection-Deep-Learning/
 - BatchNorm + ReLU + MaxPool + Dropout (50%)
 - Adam optimiser, learning rate 0.001, 20 epochs
 
-### Experiment 2 — GoogLeNet (Transfer Learning)
+### Experiment 2 — SqueezeNet (Transfer Learning)
 - Pretrained on ImageNet (1.2M images, 1000 classes)
-- Inception modules process multiple filter sizes in parallel
-- Only 5M parameters (efficient for CPU training)
+- Fire modules: squeeze (1×1) + expand (1×1 and 3×3) convolutions
+- Only 1.2M parameters (50× fewer than AlexNet)
 - SGDM optimiser, learning rate 0.0001, 15 epochs
+- Input size: 227×227
 
 ### Experiment 3 — ResNet-18 (Transfer Learning)
 - Pretrained on ImageNet
@@ -108,6 +107,10 @@ TB-Detection-Deep-Learning/
 - ROC curves and AUC values
 - Training/validation accuracy and loss curves
 
-## Reference
+## References
 
-Rahman, T., Khandakar, A., Kadir, M.A., et al. (2020). "Reliable Tuberculosis Detection using Chest X-ray with Deep Learning, Segmentation and Visualization." *IEEE Access*, 8, 191586-191601.
+1. Rahman, T., Khandakar, A., Kadir, M.A., et al. (2020). "Reliable Tuberculosis Detection using Chest X-ray with Deep Learning, Segmentation and Visualization." *IEEE Access*, 8, 191586-191601.
+
+2. Hashmi, M. F., et al. (2020). "Transfer Learning with Deep Convolutional Neural Network (CNN) for Pneumonia Detection Using Chest X-ray." *Applied Sciences*, 10(9), 3233.
+
+3. Iandola, F. N., et al. (2016). "SqueezeNet: AlexNet-level accuracy with 50x fewer parameters and <0.5MB model size." *arXiv:1602.07360*.
